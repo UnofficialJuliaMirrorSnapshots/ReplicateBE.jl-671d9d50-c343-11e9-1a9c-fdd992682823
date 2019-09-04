@@ -32,7 +32,7 @@ function calcci(x::Float64, se::Float64, df::Float64, alpha::Float64, expci::Boo
 end
 function Base.show(io::IO, obj::Tuple{Vararg{Tuple{Float64, Float64}}})
     for i in obj
-        println(i)
+        println(io, i)
     end
 end
 function reml2(obj::RBE, θ::Array{Float64, 1})
@@ -45,7 +45,7 @@ function contrast(obj::RBE, L::Matrix{T}) where T <: Real
 end
 function lsm(obj::RBE, L::Matrix{T}) where T <: Real
     lcl  = L*obj.C*L'
-    return L*obj.β, sqrt.((lcl))
+    return L*obj.β, sqrt.(lcl)
 end
 function emm(obj::RBE, fm, lm)
     La = lmean(obj::RBE)'
@@ -66,4 +66,17 @@ function lmean(obj::RBE)
         end
     end
     return Matrix(L')
+end
+
+
+#-------------------------------------------------------------------------------
+function checkdata(X, Z, Xv, Zv, y)
+    if size(Z)[2] != 2 error("Size random effect matrix != 2. Not implemented yet!") end
+    if length(Xv) != length(Zv) error("Length Xv != Zv !!!") end
+    for i = 1:length(Xv)
+        if size(Xv[i])[1]  != size(Zv[i])[1] error("Row num of subject $i Xv != Zv !!!") end
+        #if size(Xv[i])[1]  != 4 error("Subject observation of subject $i != 4, other designs not implemented yet!!!") end
+        #if sum(Zv[i][:,1]) != 2 error("Subject $i, formulation 1, not have 2 observation, other solutions not implemented yet!!!") end
+        #if sum(Zv[i][:,2]) != 2 error("Subject $i, formulation 2, not have 2 observation, other solutions not implemented yet!!!") end
+    end
 end
