@@ -15,17 +15,30 @@ using DataFrames, Distributions, StatsModels, StatsBase, ForwardDiff, LinearAlge
 const LOG2PI = log(2π)
 const MEMOPT = true
 
+struct EffectTable
+    name
+    est
+    se
+    f
+    df
+    p
+    function EffectTable(name, est, se, f, df)
+        new(name, est, se, f, df, NaN)
+    end
+end
+
 struct RBE
     model::ModelFrame               #Model frame
     rmodel::ModelFrame              #Random effect model
     factors::Array{Symbol, 1}       #Factor list
-    β::Array{Float64, 1}            #β coefficients (fixed effect)
+    #β::Array{Float64, 1}            #β coefficients (fixed effect)
     θ0::Array{Float64, 1}           #Initial variance paramethers
     θ::Array{Float64, 1}            #Final variance paramethers
     reml::Float64                   #-2REML
-    se::Array{Float64, 1}           #SE for each β level
-    f::Array{Float64, 1}            #F for each β level
-    df::Array{Float64, 1}           #DF (degree of freedom) for each β level (Satterthwaite)
+    fixed::EffectTable
+    #se::Array{Float64, 1}           #SE for each β level
+    #f::Array{Float64, 1}            #F for each β level
+    #df::Array{Float64, 1}           #DF (degree of freedom) for each β level (Satterthwaite)
     df2::Float64                    #DF N / pn - sn
     R::Array{Matrix{Float64},1}     #R matrices for each subject
     V::Array{Matrix{Float64},1}     #V matrices for each subject
@@ -86,7 +99,8 @@ function rbe(df; dvar::Symbol,
     Zf = @eval(@formula($dvar ~ 0 + $formulation))
     MF = ModelFrame(Xf, df)
     RMF = ModelFrame(Zf, df, contrasts = Dict(formulation => StatsModels.FullDummyCoding()))
-    X  = ModelMatrix(MF).m
+    MM = ModelMatrix(MF)
+    X  = MM.m
     Z  = ModelMatrix(RMF).m
     p  = rank(X)
     y  = df[:, dvar]                                                            #Dependent variable
@@ -162,10 +176,31 @@ function rbe(df; dvar::Symbol,
 
     #Secondary parameters calculation
     A            = 2*pinv(H)
-    @timeit to "etc" se, F, df, C = ctrst(p, Xv, Zv, iVv, θ, β, A; memopt = memopt)
+    C            = cmat(Xv, Zv, iVv, θ)
+
+    se    = Array{Float64, 1}(undef, p)
+    F     = Array{Float64, 1}(undef, p)
+    df    = Array{Float64, 1}(undef, p)
+    for i = 1:p
+        L    = zeros(1, p)
+        L[i]    = 1
+        Lt      = L'
+        lcl     = L*C*Lt                         #lcl     = L*C*L'
+        lclr    = rank(lcl)
+        se[i]   = sqrt((lcl)[1])
+        Lβ      = L*β
+        F[i]    = Lβ'*inv(lcl)*Lβ/lclr           #F[i]    = (L*β)'*inv(L*C*L')*(L*β)
+        lclg(x) = lclgf(L, Lt, Xv, Zv, x; memopt = memopt)
+        g       = ForwardDiff.gradient(lclg, θ)
+        df[i]   = 2*((lcl)[1])^2/(g'*(A)*g)
+        #LinearAlgebra.eigen(L*C*L')
+    end
+    fixed = EffectTable(coefnames(MF), β, se, F, df)
+
+    #@timeit to "etc" se, F, df = ctrst(p, Xv, Zv, iVv, θ, β, A, C; memopt = memopt)
     df2          = N / pn - sn
     #println(to)                               #!!!should be checked!!!
-    return RBE(MF, RMF, [sequence, period, formulation], β, θvec0, θ, remlv, se, F, df, df2, Rv, Vv, G, C, A, H, X, Z, Xv, Zv, yv, dH, pO, O)
+    return RBE(MF, RMF, [sequence, period, formulation], θvec0, θ, remlv, fixed, df2, Rv, Vv, G, C, A, H, X, Z, Xv, Zv, yv, dH, pO, O)
 end #END OF rbe()
 #-------------------------------------------------------------------------------
 #-------------------------------------------------------------------------------
@@ -373,14 +408,11 @@ function remlb(yv, Zv, p, Xv, θvec, β; memopt::Bool = true)
         #θ2m .+= tm*Xv[i]
         #βm  .+= tm*yv[i]
     end
-
     mul!(βt, inv(θ2), βm)
-
     for i = 1:n
         r    = yv[i] - Xv[i]*βt
         θ3  += r'*iVv[i]*r
     end
-
     return   -(θ1 + logdet(θ2) + θ3 + c)/2
 end
 """
@@ -402,34 +434,6 @@ function lclgf(L, Lt, Xv, Zv, θ; memopt::Bool = true)
     end
     return (L*inv(C)*Lt)[1]
 end
-"""
-    Secondary param estimation:
-    SE
-    F
-    DF
-    C
-"""
-function ctrst(p, Xv, Zv, iVv, θ, β, A; memopt::Bool = true)
-    C     = cmat(Xv, Zv, iVv, θ)
-    se    = Array{Float64, 1}(undef, p)
-    F     = Array{Float64, 1}(undef, p)
-    df    = Array{Float64, 1}(undef, p)
-    for i = 1:p
-        L    = zeros(1, p)
-        L[i]    = 1
-        Lt      = L'
-        lcl     = L*C*Lt                         #lcl     = L*C*L'
-        lclr    = rank(lcl)
-        se[i]   = sqrt((lcl)[1])
-        Lβ      = L*β
-        F[i]    = Lβ'*inv(lcl)*Lβ/lclr           #F[i]    = (L*β)'*inv(L*C*L')*(L*β)
-        lclg(x) = lclgf(L, Lt, Xv, Zv, x; memopt = memopt)
-        g       = ForwardDiff.gradient(lclg, θ)
-        df[i]   = 2*((lcl)[1])^2/(g'*(A)*g)
-        #LinearAlgebra.eigen(L*C*L')
-    end
-    return se, F, df, C
-end
 #-------------------------------------------------------------------------------
 #             REML FOR OPT ALGORITHM
 #-------------------------------------------------------------------------------
@@ -437,7 +441,6 @@ end
     REML with β final update
 """
 function reml2b!(yv::S, Zv::T, p::Int, n::Int, N::Int, Xv::T, G::Array{Float64, 2}, Rv::T, Vv::T, iVv::T, θvec::Array{Float64, 1}, β::Array{Float64, 1}, memc, memc2, memc3, memc4)::Float64 where T <: Array{Array{Float64, 2}, 1} where S <: Array{Array{Float64, 1}, 1}
-
     gmat!(G, θvec[3], θvec[4], θvec[5])
     c  = (N-p)*LOG2PI #log(2π)
     θ1 = 0
@@ -445,30 +448,16 @@ function reml2b!(yv::S, Zv::T, p::Int, n::Int, N::Int, Xv::T, G::Array{Float64, 
     θ3 = 0
     iV   = nothing
     fill!(memc4, 0)
-    #θ2m  = zeros(p,p)
     βm   = zeros(p)
     θr   = [θvec[1], θvec[2]]
     @inbounds for i = 1:n
         rmat!(Rv[i], θr, Zv[i])
         vmat!(Vv[i], G, Rv[i], Zv[i], memc)
         copyto!(iVv[i], inv(Vv[i]))
-
-        #Rv[i] = memrmat(θr, Zv[i])
-        #zgz   = lmemzgz(G,  Zv[i])
-        #Vv[i] = memvmat(zgz, Rv[i])
-        #iVv[i]= meminv(Vv[i])
-
         θ1  += logdet(Vv[i])
         mul!(memc2[size(Xv[i])[1]], Xv[i]', iVv[i])
         θ2    .+= memc2[size(Xv[i])[1]]*Xv[i]
         βm    .+= memc2[size(Xv[i])[1]]*yv[i]
-
-        #ToDo
-        #mul!(memcX[length(yv[i])], memc2[size(Xv[i])[1]], yv[i])
-        #βm  .+= memcX[length(yv[i])]
-        #tm   = Xv[i]'*iVv[i]    #Temp matrix for Xv[i]'*iV*Xv[i] and Xv[i]'*iV*yv[i] calc
-        #θ2m .+= tm*Xv[i]
-        #βm  .+= tm*yv[i]
     end
     mul!(β, inv(θ2), βm)
     for i = 1:n
@@ -479,7 +468,6 @@ function reml2b!(yv::S, Zv::T, p::Int, n::Int, N::Int, Xv::T, G::Array{Float64, 
         #r    = yv[i] - Xv[i]*β
         #θ3  += r'*iVv[i]*r
     end
-    #θ2       = logdet(θ2m)
     return   -(θ1 + logdet(θ2) + θ3 + c)
 end
 #-------------------------------------------------------------------------------
