@@ -1,7 +1,12 @@
 - v0.1.4
     * StatsModels v0.6
-    * change struct RBE
-    * p value
+    * change struct RBE (some fields renamed, new fixed effect struct)
+    * new struct for tables
+    * DF calculations
+    * Type III Table
+    * p values
+    * methods to get estimates and contrasts
+    * optimization, bugfix, cosmetics
 
 - v0.1.3
 
