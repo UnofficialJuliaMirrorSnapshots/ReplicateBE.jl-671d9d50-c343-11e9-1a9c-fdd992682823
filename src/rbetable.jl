@@ -3,34 +3,40 @@
 abstract type RBETable end
 
 struct EffectTable <: RBETable
-    name::Vector
-    est::Vector
-    se::Vector
-    f::Vector
-    df::Vector
-    t::Vector
-    p::Vector
+    name::Tuple{Vararg}
+    est::Tuple{Vararg}
+    se::Tuple{Vararg}
+    f::Tuple{Vararg}
+    df::Tuple{Vararg}
+    t::Tuple{Vararg}
+    p::Tuple{Vararg}
     function EffectTable(name, est, se, f, df, t, p)
         if !(length(name)==length(est)==length(se)==length(f)==length(df)==length(t)==length(p)) throw(ArgumentError("Unequal vectors size!")) end
-        new(name, est, se, f, df, t, p)
+        new(Tuple(name), Tuple(est), Tuple(se), Tuple(f), Tuple(df), Tuple(t), Tuple(p))
     end
 end
 struct ContrastTable <: RBETable
     name::Vector
     f::Vector
+    ndf::Vector
     df::Vector
     p::Vector
-    function ContrastTable(name, f, df, p)
-        new(name, f, df, p)
+    function ContrastTable(name, f, ndf, df, p)
+        new(name, f, ndf, df, p)
     end
 end
 struct EstimateTable <: RBETable
     name::Vector
-    f::Vector
+    est::Vector
+    se::Vector
     df::Vector
+    t::Vector
     p::Vector
-    function EstimateTable(name, f, df, p)
-        new(name, f, df, p)
+    ll::Vector
+    ul::Vector
+    alpha::Real
+    function EstimateTable(name, est, se, df, t, p, ll, ul, alpha)
+        new(name, est, se, df, t, p, ll, ul, alpha)
     end
 end
 
@@ -48,7 +54,7 @@ function Base.show(io::IO, t::T) where T <: RBETable
         if any(x -> x, t[i] .=== NaN) mask[i] = false else  mask[i] = true end
     end
     matrix      = Array{String, 2}(undef, length(t.name), length(header))
-    matrix[:,1] = string.(t.name)
+    matrix[:,1] = string.(collect(t.name))
     for c = 2:length(header)
         for r = 1:length(t.name)
             matrix[r,c] = string(round(t[r,c], sigdigits=6))
@@ -81,8 +87,8 @@ function tableheader(t::EffectTable)
     return ["Effect", "Value" , "SE",  "F" , "DF", "t", "P|t|"]
 end
 function tableheader(t::ContrastTable)
-    return ["Effect", "F" , "DF", "P|f|"]
+    return ["Effect", "F" , "NumDF", "DF", "P|f|"]
 end
 function tableheader(t::EstimateTable)
-    return ["Effect", "Value" , "SE",  "DF", "t", "P|t|", "CI Upper", "CI Lower"]
+    return ["Effect", "Value" , "SE",  "DF", "t", "P|t|", "$((1-t.alpha)*100)% CI Upper", "$((1-t.alpha)*100)% CI Lower"]
 end

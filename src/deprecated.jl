@@ -1,3 +1,11 @@
+#=
+
+#M       = L'*inv(L*L')*L
+#t1      = tr(M*C)
+#v1      = t1^2/tr(M*C*M*C)
+#F[i]    = β'*M*β/t1
+#df[i]   = 2*(t1)^2/(g'*(A)*g)
+
 """
     Secondary param estimation:
     SE
@@ -112,3 +120,13 @@ function memcalloc(p, zs, yv)
     memc4 = zeros(p, p)
     return memc, memc2, memc3, memc4
 end
+
+#Model Frame utils
+function lvec(mm::ModelMatrix, f::Int)
+    l = zeros(length(mm.assign))
+    for i = 1:length(l)
+        if mm.assign == f l[i] = 1 end
+    end
+end
+
+=#

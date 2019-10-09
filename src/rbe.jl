@@ -8,7 +8,7 @@ struct RBE
     factors::Array{Symbol, 1}       #Factor list
     #β::Array{Float64, 1}            #β coefficients (fixed effect)
     θ0::Array{Float64, 1}           #Initial variance paramethers
-    θ::Array{Float64, 1}            #Final variance paramethers
+    θ::Tuple{Vararg{Float64}}       #Final variance paramethers
     reml::Float64                   #-2REML
     fixed::EffectTable
     typeiii::ContrastTable
@@ -143,7 +143,7 @@ function rbe(df; dvar::Symbol,
         F[i]    = β'*L'*inv(lcl)*L*β/lclr                                       #F[i]    = (L*β)'*inv(L*C*L')*(L*β)/lclr
         #lclg    = lclgf(L, Lt, Xv, Zv, x; memopt = memopt)
         g       = ForwardDiff.gradient(x -> lclgf(L, Lt, Xv, Zv, x; memopt = memopt), θ)
-        df[i]   = 2*((lcl)[1])^2/(g'*(A)*g)
+        df[i]   = max(1, 2*((lcl)[1])^2/(g'*(A)*g))
         t[i]    = ((L*β)/se[i])[1]
         pval[i] = ccdf(TDist(df[i]), abs(t[i]))*2
         #LinearAlgebra.eigen(L*C*L')
@@ -152,23 +152,30 @@ function rbe(df; dvar::Symbol,
     fac         = [sequence, period, formulation]
     F           = Array{Float64, 1}(undef, length(fac))
     df          = Array{Float64, 1}(undef, length(fac))
+    ndf         = Array{Float64, 1}(undef, length(fac))
     pval        = Array{Float64, 1}(undef, length(fac))
     for i = 1:length(fac)
         L       = lmatrix(MF, fac[i])
-        Lt      = L'
-        lcl     = L*C*Lt
+        lcl     = L*C*L'
         lclr    = rank(lcl)
-        #M       = L'*inv(L*L')*L
-        #t1      = tr(M*C)
-        #v1      = t1^2/tr(M*C*M*C)
-        #F[i]    = β'*M*β/t1
-        #df[i]   = 2*(t1)^2/(g'*(A)*g)
         F[i]    = β'*L'*inv(lcl)*L*β/lclr
-        g       = ForwardDiff.gradient(x -> lclgf(L, Lt, Xv, Zv, x; memopt = memopt), θ)
-        df[i]   = 2*((lcl)[1])^2/(g'*(A)*g)
-        pval[i] = ccdf(FDist(numdf[fac[i]], df[i]), F[i])
+        if lclr ≥ 2
+            vm  = Array{Float64, 1}(undef, lclr)
+            for i = 1:lclr
+                g       = ForwardDiff.gradient(x -> lclgf(L[i:i,:], L[i:i,:]', Xv, Zv, x; memopt = memopt), θ)
+                dfi      = 2*((L[i:i,:]*C*L[i:i,:]')[1])^2/(g'*(A)*g)
+                vm[i]   = dfi/(dfi-2)
+            end
+            dfi = 2*sum(vm)/(sum(vm)-lclr)
+        else
+            g   = ForwardDiff.gradient(x -> lclgf(L, L', Xv, Zv, x; memopt = memopt), θ)
+            dfi = 2*((lcl)[1])^2/(g'*(A)*g)
+        end
+        df[i]   = max(1, dfi)
+        ndf[i]  = numdf[fac[i]]
+        pval[i] = ccdf(FDist(ndf[i], df[i]), F[i])
     end
-    typeiii     = ContrastTable(fac, F, df, pval)
+    typeiii     = ContrastTable(fac, F, ndf, df, pval)
     design      = Design(N, n,
     termmodelleveln(MF, sequence),
     termmodelleveln(MF, period),
@@ -176,15 +183,18 @@ function rbe(df; dvar::Symbol,
     sbf,
     p, zxr, n - termmodelleveln(MF, sequence), N - zxr, N - zxr + p)
     #println(to)
-    return RBE(MF, RMF, design, fac, θvec0, θ, remlv, fixed, typeiii, Rv, Vv, G, C, A, H, X, Z, Xv, Zv, yv, dH, pO, O)
+    return RBE(MF, RMF, design, fac, θvec0, Tuple(θ), remlv, fixed, typeiii, Rv, Vv, G, C, A, H, X, Z, Xv, Zv, yv, dH, pO, O)
 end #END OF rbe()
 #-------------------------------------------------------------------------------
 #returm -2REML
 """
-    Returm -2REML for rbe model object and θ variance parameters vector
+    Returm -2REML for rbe model
 """
 function reml2(rbe::RBE, θ::Array{Float64, 1})
-    return -2*reml(rbe.yv, rbe.Zv, rank(ModelMatrix(rbe.model).m), rbe.Xv, θ, rbe.fixed.est)
+    return -2*reml(rbe.yv, rbe.Zv, rank(ModelMatrix(rbe.model).m), rbe.Xv, θ, coef(rbe))
+end
+function reml2(rbe::RBE)
+    return rbe.reml
 end
 #-------------------------------------------------------------------------------
 #-------------------------------------------------------------------------------
@@ -193,7 +203,7 @@ end
     Return model coefficients
 """
 function StatsBase.coef(rbe::RBE)
-    return copy(rme.fixed.est)
+    return collect(rbe.fixed.est)
 end
 #Confidence interval
 function StatsBase.confint(obj::RBE, alpha::Float64; expci::Bool = false, inv::Bool = false, df = :sat)
@@ -217,7 +227,29 @@ function StatsBase.confint(obj::RBE, alpha::Float64; expci::Bool = false, inv::B
     end
     return Tuple(a)
 end
+#-------------------------------------------------------------------------------
+function coefse(rbe::RBE)
+    return collect(rbe.fixed.se)
+end
+function theta(rbe::RBE)
+    return collect(rbe.θ)
+end
 
+function coefnum(rbe::RBE)
+    return length(rbe.fixed.se)
+end
+
+function design(rbe::RBE)::Design
+    return rbe.design
+end
+
+function fixed(rbe::RBE)
+    return rbe.fixed
+end
+
+function typeiii(rbe::RBE)
+    return rbe.typeiii
+end
 #-------------------------------------------------------------------------------
 function Base.show(io::IO, rbe::RBE)
     rcoef = coefnames(rbe.rmodel);
