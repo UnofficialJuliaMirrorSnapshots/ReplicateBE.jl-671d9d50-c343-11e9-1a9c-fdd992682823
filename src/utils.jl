@@ -1,4 +1,12 @@
 #return contrast table
+"""
+    contrast(rbe::RBE, L::Matrix; numdf = 1, name = "Contrast", memopt = true)::ContrastTable
+
+Return contrast table for L matrix.
+
+``F = \\frac{\\beta'L'(LCL')^{-1}L\\beta}{rank(LCL')}``
+
+"""
 function contrast(rbe::RBE, L::Matrix; numdf = 1, name = "Contrast", memopt = true)::ContrastTable
     β       = coef(rbe)
     lcl     = L*rbe.C*L'
@@ -20,14 +28,28 @@ function contrast(rbe::RBE, L::Matrix; numdf = 1, name = "Contrast", memopt = tr
     pval    = ccdf(FDist(1, df), F)
     return ContrastTable([name], [F], [numdf], [df], [pval])
 end
+"""
+    estimate(rbe::RBE, L::Matrix; name = "Estimate", memopt = true, alpha = 0.05)
 
+Return estimate table for L 1xp matrix.
+
+``estimate = L\\beta``
+
+``se = \\sqrt{LCL'}``
+
+``t = estimate/se``
+
+``df = \\frac{2(LCL')^{2}}{g'Ag}``
+where ``A = 2H``
+where ``g = \\triangledown _{\\theta}(LC^{-1}L')``
+"""
 function estimate(rbe::RBE, L::Matrix; name = "Estimate", memopt = true, alpha = 0.05)
     lcl     = L*rbe.C*L'
     β       = coef(rbe)
     est     = (L*β)[1]
     lclr    = rank(lcl)
     se      = sqrt((lcl)[1])
-    F       = β'*L'*inv(lcl)*L*β/lclr
+    #F       = β'*L'*inv(lcl)*L*β/lclr
     θ       = theta(rbe)
     g       = ForwardDiff.gradient(x -> lclgf(L, L', rbe.Xv, rbe.Zv, x; memopt = memopt), θ)
     df      = 2*((lcl)[1])^2/(g'*(rbe.A)*g)
@@ -37,6 +59,11 @@ function estimate(rbe::RBE, L::Matrix; name = "Estimate", memopt = true, alpha =
 end
 
 # L Matrix for TYPE III
+"""
+    lmatrix(mf::ModelFrame, f::Union{Symbol, AbstractTerm})
+
+L matrix for factor.
+"""
 function lmatrix(mf::ModelFrame, f::Union{Symbol, AbstractTerm})
     l   = length(mf.f.rhs.terms)
     id  = findterm(mf, f)
@@ -86,21 +113,23 @@ function termmodelleveln(MF::ModelFrame, symbol::Symbol)::Int
     id = findterm(MF, symbol)
     return length(MF.f.rhs.terms[id].contrasts.levels)
 end
-
-function calcci(x::Float64, se::Float64, df::Float64, alpha::Float64, expci::Bool)::Tuple{Float64, Float64}
-    q = quantile(TDist(df), 1.0-alpha/2)
-    if !expci
-        return x-q*se, x+q*se
-    else
-        return exp(x-q*se), exp(x+q*se)
-    end
-end
 #
+"""
+    lsm(rbe::RBE, L::Matrix)
+
+Deprecated.
+"""
+#Deprecated
 function lsm(rbe::RBE, L::Matrix)
     lcl  = L*rbe.C*L'
     return L*coef(rbe), sqrt.(lcl)
 end
+#
+"""
+    emm(obj::RBE, fm::Matrix, lm::Matrix)
 
+Matrix mask.
+"""
 function emm(obj::RBE, fm::Matrix, lm::Matrix)
     La = lmean(obj::RBE)
     L  = La .* fm
@@ -108,6 +137,11 @@ function emm(obj::RBE, fm::Matrix, lm::Matrix)
     return lsm(obj, Matrix(L))
 end
 #General mean contrast L matrix 1xp
+"""
+    lmean(obj::RBE)
+
+Return L-matrix for general mean.
+"""
 function lmean(obj::RBE)
     L    = zeros(1, length(obj.fixed.est))
     L[1] = 1.0

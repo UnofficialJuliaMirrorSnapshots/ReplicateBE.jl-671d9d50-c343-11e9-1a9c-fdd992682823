@@ -1,21 +1,21 @@
 #
 # GENARAL REPLICATE BIOEQUIVALENCE STRUCTURE
 #
+"""
+
+    Replicate bioequivalence structure.
+
+"""
 struct RBE
     model::ModelFrame               #Model frame
     rmodel::ModelFrame              #Random effect model
     design::Design
     factors::Array{Symbol, 1}       #Factor list
-    #β::Array{Float64, 1}            #β coefficients (fixed effect)
     θ0::Array{Float64, 1}           #Initial variance paramethers
     θ::Tuple{Vararg{Float64}}       #Final variance paramethers
     reml::Float64                   #-2REML
     fixed::EffectTable
     typeiii::ContrastTable
-    #se::Array{Float64, 1}           #SE for each β level
-    #f::Array{Float64, 1}            #F for each β level
-    #df::Array{Float64, 1}           #DF (degree of freedom) for each β level (Satterthwaite)
-    #df2::Float64                    #DF N / pn - sn
     R::Array{Matrix{Float64},1}     #R matrices for each subject
     V::Array{Matrix{Float64},1}     #V matrices for each subject
     G::Matrix{Float64}              #G matrix
@@ -33,7 +33,24 @@ struct RBE
 end
 
 """
-    Mixed model fitting function for replicate bioequivalence
+
+    rbe(df; dvar::Symbol,
+        subject::Symbol,
+        formulation::Symbol,
+        period::Symbol,
+        sequence::Symbol,
+        g_tol::Float64 = 1e-8, x_tol::Float64 = 0.0, f_tol::Float64 = 0.0, iterations::Int = 100,
+        store_trace = false, extended_trace = false, show_trace = false,
+        memopt = true)
+
+Mixed model fitting function for replicate bioequivalence.
+
+Mixed model in matrix form:
+``y = X\\beta+Zu+\\epsilon``
+
+with covariance matrix for each subject:
+``V_{i} = Z_{i}GZ_i'+R_{i}``
+
 """
 function rbe(df; dvar::Symbol,
     subject::Symbol,
@@ -45,9 +62,10 @@ function rbe(df; dvar::Symbol,
     memopt = true)
 
     if any(x -> x ∉ names(df), [subject, formulation, period, sequence]) throw(ArgumentError("Names not found in DataFrame!")) end
-    if !(eltype(df[!,dvar]) <: Real) println("Responce variable not a float!") end
+    if !(eltype(df[!,dvar]) <: Real) println("Responce variable ∉ Real!") end
 
     to = TimerOutput()
+    #should not change initial DS
     categorical!(df, subject);
     categorical!(df, formulation);
     categorical!(df, period);
@@ -188,11 +206,21 @@ end #END OF rbe()
 #-------------------------------------------------------------------------------
 #returm -2REML
 """
-    Returm -2REML for rbe model
+    reml2(rbe::RBE, θ::Array{Float64, 1})
+
+Returm -2REML for rbe model
 """
 function reml2(rbe::RBE, θ::Array{Float64, 1})
     return -2*reml(rbe.yv, rbe.Zv, rank(ModelMatrix(rbe.model).m), rbe.Xv, θ, coef(rbe))
 end
+"""
+    reml2(rbe::RBE)
+
+Returm -2REML for rbe model
+
+``2logREML(\\theta,\\beta) = -\\frac{N-p}{2} - \\frac{1}{2}\\sum_{i=1}^nlog|V_{i}|-\\frac{1}{2}log|\\sum_{i=1}^nX_i'V_i^{-1}X_i|-\\frac{1}{2}\\sum_{i=1}^n(y_i - X_{i}\\beta)'V_i^{-1}(y_i - X_{i}\\beta)``
+
+"""
 function reml2(rbe::RBE)
     return rbe.reml
 end
@@ -200,12 +228,21 @@ end
 #-------------------------------------------------------------------------------
 #-------------------------------------------------------------------------------
 """
-    Return model coefficients
+    coef(rbe::RBE)
+
+Return model coefficients.
+
+``\\beta = {(\\sum_{i=1}^n X_{i}'V_i^{-1}X_{i})}^{-1}(\\sum_{i=1}^n X_{i}'V_i^{-1}y_{i})``
 """
 function StatsBase.coef(rbe::RBE)
     return collect(rbe.fixed.est)
 end
 #Confidence interval
+"""
+    confint(obj::RBE, alpha::Float64; expci::Bool = false, inv::Bool = false, df = :sat)
+
+Return confidence intervals for coefficients.
+"""
 function StatsBase.confint(obj::RBE, alpha::Float64; expci::Bool = false, inv::Bool = false, df = :sat)
     ifv = 1
     if inv ifv = -1 end
@@ -227,26 +264,64 @@ function StatsBase.confint(obj::RBE, alpha::Float64; expci::Bool = false, inv::B
     end
     return Tuple(a)
 end
+function calcci(x::Float64, se::Float64, df::Float64, alpha::Float64, expci::Bool)::Tuple{Float64, Float64}
+    q = quantile(TDist(df), 1.0-alpha/2)
+    if !expci
+        return x-q*se, x+q*se
+    else
+        return exp(x-q*se), exp(x+q*se)
+    end
+end
 #-------------------------------------------------------------------------------
+"""
+    coefse(rbe::RBE)
+
+Return standart error for coefficients.
+
+``se = \\sqrt{LCL'}``
+"""
 function coefse(rbe::RBE)
     return collect(rbe.fixed.se)
 end
+"""
+    theta(rbe::RBE)
+
+Return theta vector (vector of variation parameters from optimization procedure).
+"""
 function theta(rbe::RBE)
     return collect(rbe.θ)
 end
+"""
+    coefnum(rbe::RBE)
 
+Return number of coefficients (length β).
+"""
 function coefnum(rbe::RBE)
     return length(rbe.fixed.se)
 end
+"""
+    design(rbe::RBE)::Design
 
+Return design information object.
+"""
 function design(rbe::RBE)::Design
     return rbe.design
 end
+"""
+    fixed(rbe::RBE)
 
+Return fixed effect table (β).
+"""
 function fixed(rbe::RBE)
     return rbe.fixed
 end
+"""
+    typeiii(rbe::RBE)
 
+Return TYPE III table.
+
+see contrast
+"""
 function typeiii(rbe::RBE)
     return rbe.typeiii
 end
