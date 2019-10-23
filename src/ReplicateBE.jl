@@ -5,11 +5,11 @@
 
 module ReplicateBE
 
-using DataFrames, Distributions, StatsModels, StatsBase, ForwardDiff, LinearAlgebra, Random, PDMats, Optim, Memoize, TimerOutputs
+using DataFrames, Distributions, StatsModels, StatsBase, ForwardDiff, LinearAlgebra, Random, PDMats, Optim, LineSearches
 
-    export RBE, rbe, reml2, coef, coefse, coefnum, fixed, theta, typeiii, design, show, confint, contrast, estimate, lsm, emm, lmean, randrbeds
+    export RBE, rbe, reml2, nobs, coef, stderror, dof, coefnum, fixed, theta, typeiii, design, show, confint, contrast, estimate, randrbeds
     import Base.show
-    import StatsBase.confint, StatsBase.coef
+    import StatsBase.confint, StatsBase.coef, StatsBase.nobs, StatsBase.dof, StatsBase.stderror
     import Statistics.var
 
 const LOG2PI = log(2π)

@@ -15,29 +15,24 @@ ReplicateBE.rbe
 coef
 ```
 
-## ReplicateBE.coefnum
-```@docs
-ReplicateBE.coefnum
-```
-
-## ReplicateBE.fixed
-```@docs
-ReplicateBE.fixed
-```
-
-## ReplicateBE.typeiii
-```@docs
-ReplicateBE.typeiii
-```
-
 ## StatsBase.confint
 ```@docs
 confint
 ```
 
-## ReplicateBE.design
+## StatsBase.dof
 ```@docs
-ReplicateBE.design
+dof
+```
+
+## StatsBase.stderror
+```@docs
+stderror
+```
+
+## ReplicateBE.coefnum
+```@docs
+ReplicateBE.coefnum
 ```
 
 ## ReplicateBE.contrast
@@ -45,9 +40,24 @@ ReplicateBE.design
 ReplicateBE.contrast
 ```
 
+## ReplicateBE.design
+```@docs
+ReplicateBE.design
+```
+
 ## ReplicateBE.estimate
 ```@docs
 ReplicateBE.estimate
+```
+
+## ReplicateBE.fixed
+```@docs
+ReplicateBE.fixed
+```
+
+## ReplicateBE.randrbeds
+```@docs
+ReplicateBE.randrbeds
 ```
 
 ## ReplicateBE.reml2
@@ -55,22 +65,7 @@ ReplicateBE.estimate
 ReplicateBE.reml2
 ```
 
-## ReplicateBE.lsm
+## ReplicateBE.typeiii
 ```@docs
-ReplicateBE.lsm
-```
-
-## ReplicateBE.emm
-```@docs
-ReplicateBE.emm
-```
-
-## ReplicateBE.lmean
-```@docs
-ReplicateBE.lmean
-```
-
-## ReplicateBE.randrbeds
-```@docs
-ReplicateBE.randrbeds
+ReplicateBE.typeiii
 ```
