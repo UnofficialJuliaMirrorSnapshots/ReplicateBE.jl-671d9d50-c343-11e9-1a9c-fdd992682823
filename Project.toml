@@ -1,7 +1,9 @@
 authors = ["Vladimir Arnautov <mail@pharmcat.net>"]
 name = "ReplicateBE"
 uuid = "671d9d50-c343-11e9-1a9c-fdd992682823"
-version = "0.1.4"
+keywords = ["bioequivalence", "mixedmodel"]
+desc = "Mixed model solution for replicate designed bioequivalence study."
+version = "0.2.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -26,10 +28,11 @@ test = ["CSV", "Test", "StatsBase"]
 
 [compat]
 julia = "1.0, 1.1, 1.2"
-StatsBase = "≥0.22.0"
-DataFrames = "≥0.19"
-StatsModels = "≥0.6"
-Distributions = "≥0.15"
-PDMats = "≥0.9"
-ForwardDiff = "≥0.10.3"
-Optim = "≥0.19.0"
+StatsBase = "0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 0.28, 0.29, 0.30, 0.31, 0.32"
+DataFrames = "0.19"
+StatsModels = "0.6"
+Distributions = "0.15, 0.16, 0.17, 0.18, 0.19, 0.20, 0.21"
+PDMats = "0.9"
+ForwardDiff = "0.10"
+Optim = "0.19"
+LineSearches = "7.0"

@@ -4,18 +4,27 @@
 
 Return contrast table for L matrix.
 
-``F = \\frac{\\beta'L'(LCL')^{-1}L\\beta}{rank(LCL')}``
+```math
+F = \\frac{\\beta'L'(LCL')^{-1}L\\beta}{rank(LCL')}
+```
+
+where
+
+```math
+C = \\sum_{i=1}^{n} X_i'V_i^{-1}X_i
+```
 
 DF for one-dimetion case:
 
-``df = \\frac{2(LCL')^{2}}{g'Ag}``
+```math
+df = \\frac{2(LCL')^{2}}{g'Ag}
+```
 
 where ``A = 2H``
 
 where ``g = \\triangledown _{\\theta}(LC^{-1}L')``
 
-DF for multi-dimention case:
-
+DF for multi-dimention case see Schaalje et al 2002.
 
 """
 function contrast(rbe::RBE, L::Matrix; numdf = 0, name = "Contrast", memopt = true)::ContrastTable
@@ -47,15 +56,29 @@ end
 
 Return estimate table for L 1xp matrix.
 
-``estimate = L\\beta``
+```math
+estimate = L\\beta
+```
 
-``se = \\sqrt{LCL'}``
+```math
+SE = \\sqrt{LCL'}
+```
 
-``t = estimate/se``
+```math
+t = estimate / SE
+```
 
 For ```df = :sat```:
 
-``df = \\frac{2(LCL')^{2}}{g'Ag}``
+```math
+df = \\frac{2(LCL')^{2}}{g'Ag}
+```
+
+where
+
+```math
+C = \\sum_{i=1}^{n} X_i'V_i^{-1}X_i
+```
 
 where ``A = 2H``
 
@@ -63,9 +86,15 @@ where ``g = \\triangledown _{\\theta}(LC^{-1}L')``
 
 For ```df = :cont``` (contain):
 
-``df = N - rank(ZX)``
+```math
+df = N - rank(ZX)
+```
 
-CI estimate is ``CI = stimate ± t(alpha, df)*se ``
+CI estimate is:
+
+```math
+CI = estimate ± t(alpha, df)*SE
+```
 """
 function estimate(rbe::RBE, L::Matrix; df = :sat, name = "Estimate", memopt = true, alpha = 0.05)
     lcl     = L*rbe.C*L'
@@ -79,7 +108,7 @@ function estimate(rbe::RBE, L::Matrix; df = :sat, name = "Estimate", memopt = tr
         g       = ForwardDiff.gradient(x -> lclgf(L, L', rbe.Xv, rbe.Zv, x; memopt = memopt), θ)
         df      = 2*((lcl)[1])^2/(g'*(rbe.A)*g)
     elseif df == :cont
-        df      = obj.design.df3
+        df      = rbe.design.df3
     else
         throw(ArgumentError("df unknown!"))
     end
@@ -232,10 +261,3 @@ function sbjnbyf(df, subj, fac, f)
     return length(sbj)
 end
 #-------------------------------------------------------------------------------
-#=
-function Base.show(io::IO, obj::Tuple{Vararg{Tuple{Float64, Float64}}})
-    for i in obj
-        println(io, i)
-    end
-end
-=#

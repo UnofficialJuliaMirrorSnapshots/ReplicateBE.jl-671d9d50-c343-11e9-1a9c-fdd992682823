@@ -2,8 +2,35 @@
 # GENARAL REPLICATE BIOEQUIVALENCE STRUCTURE
 #
 """
+```julia
+    struct RBE
+        model::ModelFrame               #Model frame
+        rmodel::ModelFrame              #Random effect model
+        design::Design                  #Design description
+        factors::Array{Symbol, 1}       #Factor list
+        θ0::Array{Float64, 1}           #Initial variance paramethers
+        θ::Tuple{Vararg{Float64}}       #Final variance paramethers
+        reml::Float64                   #-2REML
+        fixed::EffectTable              #Fixed Effect table
+        typeiii::ContrastTable          #Type III table
+        R::Array{Matrix{Float64},1}     #R matrices for each subject
+        V::Array{Matrix{Float64},1}     #V matrices for each subject
+        G::Matrix{Float64}              #G matrix
+        C::Matrix{Float64}              #C var(β) p×p variance-covariance matrix
+        A::Matrix{Float64}              #asymptotic variance-covariance matrix of b θ
+        H::Matrix{Float64}              #Hessian matrix
+        X::Matrix                       #Matrix for fixed effects
+        Z::Matrix                       #Matrix for random effects
+        Xv::Array{Matrix{Float64},1}    #X matrices for each subject
+        Zv::Array{Matrix{Float64},1}    #Z matrices for each subject
+        yv::Array{Array{Float64, 1},1}  #responce vectors for each subject
+        detH::Float64                   #Hessian determinant
+        preoptim::Union{Optim.MultivariateOptimizationResults, Nothing}         #Pre-optimization result object
+        optim::Optim.MultivariateOptimizationResults                            #Optimization result object
+    end
+```
 
-    Replicate bioequivalence structure.
+Replicate bioequivalence structure.
 
 """
 struct RBE
@@ -43,15 +70,20 @@ end
         store_trace = false, extended_trace = false, show_trace = false,
         memopt = true)
 
-Mixed model fitting function for replicate bioequivalence.
+Mixed model fitting function for replicate bioequivalence without data preparation (apply categorical! for each factor and sort! to dataframe).
 
 Mixed model in matrix form:
 
-``y = X\\beta+Zu+\\epsilon``
+```math
+y = X\\beta + Zu + \\epsilon
+```
+
 
 with covariance matrix for each subject:
 
-``V_{i} = Z_{i}GZ_i'+R_{i}``
+```math
+V_{i} = Z_{i}GZ_i'+R_{i}
+```
 
 """
 function rbe(df; dvar::Symbol,
@@ -67,14 +99,16 @@ function rbe(df; dvar::Symbol,
     postopt = false)
 
     if any(x -> x ∉ names(df), [subject, formulation, period, sequence]) throw(ArgumentError("Names not found in DataFrame!")) end
-    if !(eltype(df[!,dvar]) <: Real) println("Responce variable ∉ Real!") end
+    if !(eltype(df[!,dvar]) <: Real)
+        @warn "Responce variable ∉ Real!"
+    end
 
     #should not change initial DS
-    categorical!(df, subject);
-    categorical!(df, formulation);
-    categorical!(df, period);
-    categorical!(df, sequence);
-    sort!(df, [subject, formulation, period])
+    #categorical!(df, subject);
+    #categorical!(df, formulation);
+    #categorical!(df, period);
+    #categorical!(df, sequence);
+    #sort!(df, [subject, formulation, period])
     Xf  = @eval(@formula($dvar ~ $sequence + $period + $formulation))
     Zf  = @eval(@formula($dvar ~ 0 + $formulation))
     MF  = ModelFrame(Xf, df)
@@ -148,8 +182,8 @@ function rbe(df; dvar::Symbol,
     remlv = -reml2b!(yv, Zv, p, n, N, Xv, G, Rv, Vv, iVv, θ, β, memalloc)
 
     #θ[5] can not be more than 1.0
-    if θ[5] > 1
-        θ[5] = 1.0 - limeps
+    if θ[5] >= 1.0
+        θ[5] = 1.0 - eps()
         if !twostep && !postopt
             @warn "ρ is more than 1.0, and no twostep or postopt used. Results may be incorrect, use twostep = true or postopt = true"
         end
@@ -165,8 +199,8 @@ function rbe(df; dvar::Symbol,
     dH          = det(H)
 
 
-    H[5,:]     .= 0
-    H[:,5]     .= 0
+    H[5,:]     .= eps()
+    H[:,5]     .= eps()
 
     #Secondary parameters calculation
     A           = 2*pinv(H)
@@ -230,6 +264,48 @@ function rbe(df; dvar::Symbol,
     p, zxr)
     return RBE(MF, RMF, design, fac, θvec0, Tuple(θ), remlv, fixed, typeiii, Rv, Vv, G, C, A, H, X, Z, Xv, Zv, yv, dH, pO, O)
 end #END OF rbe()
+"""
+This function apply following code for each factor before executing:
+
+```julia
+    categorical!(df, subject);
+    categorical!(df, formulation);
+    categorical!(df, period);
+    categorical!(df, sequence);
+    sort!(df, [subject, formulation, period])
+```
+
+It can takes more time, but can help to avoid some errors like: "ERROR: type ContinuousTerm has no field contrasts".
+"""
+function rbe!(df; dvar::Symbol,
+    subject::Symbol,
+    formulation::Symbol,
+    period::Symbol,
+    sequence::Symbol,
+    g_tol::Float64 = 1e-8, x_tol::Float64 = 0.0, f_tol::Float64 = 0.0, iterations::Int = 100,
+    store_trace = false, extended_trace = false, show_trace = false,
+    memopt = true,
+    init = [],
+    twostep = true,
+    postopt = false)
+
+    if any(x -> x ∉ names(df), [subject, formulation, period, sequence]) throw(ArgumentError("Names not found in DataFrame!")) end
+    if !(eltype(df[!,dvar]) <: Real)
+        @warn "Responce variable ∉ Real!"
+        df[!,dvar] = float.(df[!,dvar])
+    end
+
+    categorical!(df, subject);
+    categorical!(df, formulation);
+    categorical!(df, period);
+    categorical!(df, sequence);
+    sort!(df, [subject, formulation, period])
+
+    return rbe(df, dvar=dvar, subject=subject, formulation=formulation, period=period, sequence=sequence,
+    g_tol=g_tol, x_tol=x_tol, f_tol=f_tol, iterations=iterations,
+    store_trace=store_trace, extended_trace=extended_trace, show_trace=show_trace,
+    memopt=memopt, init=init, twostep=twostep, postopt=postopt)
+end
 #-------------------------------------------------------------------------------
 #returm -2REML
 """
@@ -245,9 +321,11 @@ end
 
 Returm -2logREML for rbe model
 
-``logREML(\\theta,\\beta) = -\\frac{N-p}{2} - \\frac{1}{2}\\sum_{i=1}^nlog|V_{i}|-``
+```
+logREML(\\theta,\\beta) = -\\frac{N-p}{2} - \\frac{1}{2}\\sum_{i=1}^nlog|V_{i}|-
 
-``-\\frac{1}{2}log|\\sum_{i=1}^nX_i'V_i^{-1}X_i|-\\frac{1}{2}\\sum_{i=1}^n(y_i - X_{i}\\beta)'V_i^{-1}(y_i - X_{i}\\beta)``
+-\\frac{1}{2}log|\\sum_{i=1}^nX_i'V_i^{-1}X_i|-\\frac{1}{2}\\sum_{i=1}^n(y_i - X_{i}\\beta)'V_i^{-1}(y_i - X_{i}\\beta)
+```
 
 """
 function reml2(rbe::RBE)
@@ -269,7 +347,9 @@ end
 
 Return the standard errors for the coefficients of the model.
 
-``se = \\sqrt{LCL'}``
+```math
+se = \\sqrt{LCL'}
+```
 """
 function StatsBase.stderror(rbe::RBE)
     return collect(rbe.fixed.se)
@@ -279,7 +359,9 @@ end
 
 Return model coefficients.
 
-``\\beta = {(\\sum_{i=1}^n X_{i}'V_i^{-1}X_{i})}^{-1}(\\sum_{i=1}^n X_{i}'V_i^{-1}y_{i})``
+```math
+\\beta = {(\\sum_{i=1}^n X_{i}'V_i^{-1}X_{i})}^{-1}(\\sum_{i=1}^n X_{i}'V_i^{-1}y_{i})
+```
 """
 function StatsBase.coef(rbe::RBE)
     return collect(rbe.fixed.est)
@@ -299,13 +381,19 @@ end
 
 Compute confidence intervals for coefficients, with confidence level ```level``` (by default 95%).
 
+# Arguments
+
 ```expci = true```: return exponented CI.
 
-```inv = true```: return ```-estimate ± t*se```
+```inv = true```: return ```-estimate ± t(alpha, df)*SE```
 
 ```df = :sat```: use Satterthwaite DF approximation.
 
 ```df = :df3``` or ```df = :cont```: DF (contain) = N - rank(ZX).
+
+```math
+CI = estimate ± t(alpha, df)*SE
+```
 
 """
 function StatsBase.confint(obj::RBE; level::Real=0.95, expci::Bool = false, inv::Bool = false, df = :sat)
@@ -318,21 +406,23 @@ function StatsBase.confint(obj::RBE, alpha::Float64; expci::Bool = false, inv::B
         if length(obj.fixed.df) != length(df)
             df = obj.fixed.df
         else
-            #WARN
+            @warn "length(df) not equal parameters count, default df used!"
             df = obj.fixed.df
         end
     elseif isa(df, Symbol)
-        df  = zeros(length(obj.fixed.df))
         if df == :df2
+            df  = zeros(length(obj.fixed.df))
             df .= obj.design.df2
         elseif df == :df3 || df == :cont
+            df  = zeros(length(obj.fixed.df))
             df .= obj.design.df3
         elseif df == :contw
+            df  = zeros(length(obj.fixed.df))
             df .= sum(obj.design.sbf) - length(obj.design.sbf)*obj.design.sqn
         elseif df == :sat
             df = obj.fixed.df
         else
-            #WARN
+            @warn "df unknown, default df used!"
             df = obj.fixed.df
         end
     end
@@ -354,7 +444,7 @@ end
 """
     theta(rbe::RBE)
 
-Return theta vector (vector of variation parameters from optimization procedure).
+Return theta (θ) vector (vector of variation parameters from optimization procedure).
 """
 function theta(rbe::RBE)
     return collect(rbe.θ)
@@ -372,7 +462,7 @@ end
 
 Return design information object, where:
 
-    ```
+```julia
     struct Design
         obs::Int          # Number of observations
         subj::Int         # Number of statistica independent subjects
@@ -385,8 +475,8 @@ Return design information object, where:
         df2::Int          # subj - sqn         (Robust DF)
         df3::Int          # obs  - rankxz      (Contain DF for sequence and period)
         df4::Int          # obs  - rankxz + p
-    end```
-
+    end
+```
 """
 function design(rbe::RBE)::Design
     return rbe.design

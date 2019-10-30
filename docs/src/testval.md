@@ -1,4 +1,4 @@
-# Package validation
+## Validation
 
 Validation program include public datasets and generated datasets. All public datasets include in test/testdata.jl.
 
@@ -20,17 +20,17 @@ Generated datasets made with *randrbeds* function with fixed seed (could be repr
 
 ### 48 subjects, unbalanced, 20 dropped observations
 
-    * 12  TRTR/RTRT
-    * 13  TRRT/RTTR
-    * 14  TTRR/RRTT
-    * 15  TRTR/RTRT/TRRT/RTTR
-    * 16  TRRT/RTTR/TTRR/RRTT
-    * 17  TRTR/RTRT/TTRR/RRTT
-    * 18  TRT/RTR
-    * 19  TRR/RTT
-    * 20  TR/RT/TT/RR
-    * 21 TRR/RTR/RRT
-    * 22 TRR/RTR*
+  * 12  TRTR/RTRT
+  * 13  TRRT/RTTR
+  * 14  TTRR/RRTT
+  * 15  TRTR/RTRT/TRRT/RTTR
+  * 16  TRRT/RTTR/TTRR/RRTT
+  * 17  TRTR/RTRT/TTRR/RRTT
+  * 18  TRT/RTR
+  * 19  TRR/RTT
+  * 20  TR/RT/TT/RR
+  * 21 TRR/RTR/RRT
+  * 22 TRR/RTR
 
 ### Special cases
 
@@ -113,7 +113,7 @@ formulation: T / formulation: R
 
   *SAS WARNING*: Stopped because of infinite likelihood.
 
-  ## Simulation study
+  ### Simulation study
 
   Following simulation was performed for version v0.1.4:
   ```
@@ -157,4 +157,4 @@ simulation(100000)
  7104.944474 seconds (9.51 G allocations: 2.230 TiB, 44.90% gc time)
 0.04939
 ```
- Cofinence interval (95%) for power: 0.048047 - 0.050733. No statistically significant difference found.
+ Confidence interval (95%) for power: 0.048047 - 0.050733. No statistically significant difference found.
