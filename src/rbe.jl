@@ -9,6 +9,7 @@
         design::Design                  #Design description
         factors::Array{Symbol, 1}       #Factor list
         θ0::Array{Float64, 1}           #Initial variance paramethers
+        vlm::Real
         θ::Tuple{Vararg{Float64}}       #Final variance paramethers
         reml::Float64                   #-2REML
         fixed::EffectTable              #Fixed Effect table
@@ -39,6 +40,7 @@ struct RBE
     design::Design
     factors::Array{Symbol, 1}       #Factor list
     θ0::Array{Float64, 1}           #Initial variance paramethers
+    vlm::Real
     θ::Tuple{Vararg{Float64}}       #Final variance paramethers
     reml::Float64                   #-2REML
     fixed::EffectTable
@@ -60,16 +62,16 @@ struct RBE
 end
 
 """
-
-    rbe(df; dvar::Symbol,
-        subject::Symbol,
-        formulation::Symbol,
-        period::Symbol,
-        sequence::Symbol,
-        g_tol::Float64 = 1e-8, x_tol::Float64 = 0.0, f_tol::Float64 = 0.0, iterations::Int = 100,
-        store_trace = false, extended_trace = false, show_trace = false,
-        memopt = true)
-
+```julia
+rbe(df; dvar::Symbol,
+    subject::Symbol,
+    formulation::Symbol,
+    period::Symbol,
+    sequence::Symbol,
+    g_tol::Float64 = 1e-8, x_tol::Float64 = 0.0, f_tol::Float64 = 0.0, iterations::Int = 100,
+    store_trace = false, extended_trace = false, show_trace = false,
+    memopt = true)
+```
 Mixed model fitting function for replicate bioequivalence without data preparation (apply categorical! for each factor and sort! to dataframe).
 
 Mixed model in matrix form:
@@ -77,7 +79,6 @@ Mixed model in matrix form:
 ```math
 y = X\\beta + Zu + \\epsilon
 ```
-
 
 with covariance matrix for each subject:
 
@@ -95,20 +96,13 @@ function rbe(df; dvar::Symbol,
     store_trace = false, extended_trace = false, show_trace = false,
     memopt = true,
     init = [],
-    twostep = true,
-    postopt = false)
-
+    postopt = false, vlm = 0.8, maxopttry = 50, rhoadjstep = 0.15)
+    #Check
     if any(x -> x ∉ names(df), [subject, formulation, period, sequence]) throw(ArgumentError("Names not found in DataFrame!")) end
     if !(eltype(df[!,dvar]) <: Real)
         @warn "Responce variable ∉ Real!"
     end
-
-    #should not change initial DS
-    #categorical!(df, subject);
-    #categorical!(df, formulation);
-    #categorical!(df, period);
-    #categorical!(df, sequence);
-    #sort!(df, [subject, formulation, period])
+    #Model
     Xf  = @eval(@formula($dvar ~ $sequence + $period + $formulation))
     Zf  = @eval(@formula($dvar ~ 0 + $formulation))
     MF  = ModelFrame(Xf, df)
@@ -118,7 +112,7 @@ function rbe(df; dvar::Symbol,
     Z   = ModelMatrix(RMF).m
     p   = rank(X)
     zxr = rank(ModelMatrix(ModelFrame(@eval(@formula($dvar ~ $sequence + $period + $subject*$formulation)), df)).m)
-    y   = df[:, dvar]                                                            #Dependent variable
+    y   = df[:, dvar]                                                           #Dependent variable
     #Make pre located arrays with matrices for each subject
     Xv, Zv, yv = sortsubjects(df, subject, X, Z, y)
     n  = length(Xv)
@@ -140,9 +134,13 @@ function rbe(df; dvar::Symbol,
     qro   = qr(X)
     β     = inv(qro.R)*qro.Q'*y
     #Calculate initial variance
-    iv = initvar(df, dvar, formulation, subject)
-    if iv[1] < iv[3] || iv[2] < iv[3] iv[1] = iv[2] = 2*iv[3] end
-    θvec0 = [iv[3], iv[3], iv[1]-iv[3], iv[2]-iv[3], 0.501]
+    if length(init) == 5
+        θvec0 = init
+    else
+        iv = initvar(df, dvar, formulation, subject)
+        if iv[1] < iv[3] || iv[2] < iv[3] iv[1] = iv[2] = 2*iv[3] end
+        θvec0 = rvarlink([iv[3], iv[3], iv[1]-iv[3], iv[2]-iv[3], 0.05], vlm)
+    end
     #Prelocatiom for G, R, V, V⁻¹ matrices
     G     = zeros(2, 2)
     Rv    = Array{Array{Float64,2}, 1}(undef, n)
@@ -151,61 +149,41 @@ function rbe(df; dvar::Symbol,
     matvecz!(Rv, Zv)
     matvecz!(Vv, Zv)
     matvecz!(iVv, Zv)
-    #First step optimization (pre-optimization)
-    od = OnceDifferentiable(x -> -2*reml(yv, Zv, p, Xv, x, β; memopt = memopt), θvec0; autodiff = :forward)
-    method = BFGS(linesearch = LineSearches.HagerZhang(), alphaguess = LineSearches.InitialStatic())
-    #method = optm
-    #method = ConjugateGradient()
-    #method = NelderMead()
-    limeps  = eps()
+    #Optimization
     pO      = nothing
-    if twostep
-        pO = optimize(od, [limeps, limeps, limeps, limeps, limeps], [Inf, Inf, Inf, Inf, 1.0], θvec0,  Fminbox(method), Optim.Options(g_tol = 1e-1))
-    #pO = optimize(remlf,  [limeps, limeps, limeps, limeps, limeps], [Inf, Inf, Inf, Inf, 1.0], θvec0,  Fminbox(method), Optim.Options(g_tol = 1e-3))
-        θ  = Optim.minimizer(pO)
-    else
-        #@warn "First optimization step failed. Start step two with initial θ..."
-        θ  = θvec0
+    td      = TwiceDifferentiable(x -> -2*remlb(yv, Zv, p, Xv, varlink(x, vlm), β; memopt = memopt), θvec0; autodiff = :forward)
+    opttry  = true
+    optnum  = 0
+    while opttry
+        try
+            O       = optimize(td, θvec0, method=Newton(),  g_tol=g_tol, x_tol=x_tol, f_tol=f_tol, allow_f_increases = true, store_trace = store_trace, extended_trace = extended_trace, show_trace = show_trace)
+            opttry  = false
+        catch
+            θvec0[5] = θvec0[5] - rhoadjstep
+        end
+        optnum += 1
+        if optnum > maxopttry
+            opttry = false
+            throw(ErrorException("Initial values faild! Iteration $(optnum), θvec0[5] = $(θvec0[5])."))
+        end
     end
-    #Final optimization
-    #Provide gradient function for Optim
-    #Not used yet
-    #g!(storage, θx) = copyto!(storage, ForwardDiff.gradient(x -> -2*reml(yv, Zv, p, Xv, x, β), θx))
-    #REML function for optimization
-    td = TwiceDifferentiable(x -> -2*remlb(yv, Zv, p, Xv, x, β; memopt = memopt), θvec0; autodiff = :forward)
-    #remlfb(x) = -reml2b!(yv, Zv, p, n, N, Xv, G, Rv, Vv, iVv, x, β, memc, memc2, memc3, memc4)
-    #@timeit to "o2" O  = optimize(remlfb, θ, method=Newton(),  g_tol=g_tol, x_tol=x_tol, f_tol=f_tol, allow_f_increases = true, store_trace = store_trace, extended_trace = extended_trace, show_trace = show_trace)
-    O  = optimize(td, θ, method=Newton(),  g_tol=g_tol, x_tol=x_tol, f_tol=f_tol, allow_f_increases = true, store_trace = store_trace, extended_trace = extended_trace, show_trace = show_trace)
-    θ  = copy(Optim.minimizer(O))
+    θ       = Optim.minimizer(O)
     #Get reml
-    #remlv = -2*reml(yv, Zv, p, Xv, θ, β)
-    remlv = -reml2b!(yv, Zv, p, n, N, Xv, G, Rv, Vv, iVv, θ, β, memalloc)
-
-    #θ[5] can not be more than 1.0
-    if θ[5] >= 1.0
-        θ[5] = 1.0 - eps()
-        if !twostep && !postopt
-            @warn "ρ is more than 1.0, and no twostep or postopt used. Results may be incorrect, use twostep = true or postopt = true"
-        end
-        if postopt
-            O  = optimize(od, [limeps, limeps, limeps, limeps, limeps], [Inf, Inf, Inf, Inf, 1.0], θ,  Fminbox(method), Optim.Options(g_tol=g_tol, x_tol=x_tol, f_tol=f_tol))
-            θ  = copy(Optim.minimizer(O))
-            remlv = -reml2b!(yv, Zv, p, n, N, Xv, G, Rv, Vv, iVv, θ, β, memalloc)
-        end
+    remlv   = -reml2b!(yv, Zv, p, n, N, Xv, G, Rv, Vv, iVv, varlink(θ, vlm), β, memalloc)
+    #Post optimization
+    if postopt
+        pO     = O
+        od     = OnceDifferentiable(x -> -2*reml(yv, Zv, p, Xv, varlink(x, vlm), β; memopt = memopt), θvec0; autodiff = :forward)
+        method = BFGS(linesearch = LineSearches.HagerZhang(), alphaguess = LineSearches.InitialStatic())
+        O      = optimize(od, [-Inf, -Inf, -Inf, -Inf, -Inf], [Inf, Inf, Inf, Inf, Inf], θ,  Fminbox(method), Optim.Options(g_tol=g_tol, x_tol=x_tol, f_tol=f_tol))
+        θ      = copy(Optim.minimizer(O))
+        remlv  = -reml2b!(yv, Zv, p, n, N, Xv, G, Rv, Vv, iVv, varlink(θ, vlm), β, memalloc)
     end
     #Get Hessian matrix (H) with ForwardDiff
-    #H           = Optim.trace(O)[end].metadata["h(x)"]
-    H           = ForwardDiff.hessian(x -> -2*reml(yv, Zv, p, Xv, x, β), θ)
+    H           = ForwardDiff.hessian(x -> -2*reml(yv, Zv, p, Xv, varlink(x, vlm), β), θ)
     dH          = det(H)
-
-
-    H[5,:]     .= eps()
-    H[:,5]     .= eps()
-
     #Secondary parameters calculation
     A           = 2*pinv(H)
-    #A[5,:]     .= 0
-    #A[:,5]     .= 0
     C           = cmat(Xv, Zv, iVv, θ)
     se          = Array{Float64, 1}(undef, p)
     F           = Array{Float64, 1}(undef, p)
@@ -219,10 +197,8 @@ function rbe(df; dvar::Symbol,
         lcl     = L*C*Lt                                                        #lcl     = L*C*L'
         lclr    = rank(lcl)
         se[i]   = sqrt((lcl)[1])
-        #Lβ      = L*β
         F[i]    = β'*L'*inv(lcl)*L*β/lclr                                       #F[i]    = (L*β)'*inv(L*C*L')*(L*β)/lclr
-        #lclg    = lclgf(L, Lt, Xv, Zv, x; memopt = memopt)
-        g       = ForwardDiff.gradient(x -> lclgf(L, Lt, Xv, Zv, x; memopt = memopt), θ)
+        g       = ForwardDiff.gradient(x -> lclgf(L, Lt, Xv, Zv, varlink(x, vlm); memopt = memopt), θ)
         df[i]   = max(1, 2*((lcl)[1])^2/(g'*(A)*g))
         t[i]    = ((L*β)/se[i])[1]
         pval[i] = ccdf(TDist(df[i]), abs(t[i]))*2
@@ -242,13 +218,13 @@ function rbe(df; dvar::Symbol,
         if lclr ≥ 2
             vm  = Array{Float64, 1}(undef, lclr)
             for i = 1:lclr
-                g        = ForwardDiff.gradient(x -> lclgf(L[i:i,:], L[i:i,:]', Xv, Zv, x; memopt = memopt), θ)
+                g        = ForwardDiff.gradient(x -> lclgf(L[i:i,:], L[i:i,:]', Xv, Zv, varlink(x, vlm); memopt = memopt), θ)
                 dfi      = 2*((L[i:i,:]*C*L[i:i,:]')[1])^2/(g'*(A)*g)
                 vm[i]    = dfi/(dfi-2)
             end
             dfi = 2*sum(vm)/(sum(vm)-lclr)
         else
-            g   = ForwardDiff.gradient(x -> lclgf(L, L', Xv, Zv, x; memopt = memopt), θ)
+            g   = ForwardDiff.gradient(x -> lclgf(L, L', Xv, Zv, varlink(x, vlm); memopt = memopt), θ)
             dfi = 2*((lcl)[1])^2/(g'*(A)*g)
         end
         df[i]   = max(1, dfi)
@@ -262,7 +238,7 @@ function rbe(df; dvar::Symbol,
     termmodelleveln(MF, formulation),
     sbf,
     p, zxr)
-    return RBE(MF, RMF, design, fac, θvec0, Tuple(θ), remlv, fixed, typeiii, Rv, Vv, G, C, A, H, X, Z, Xv, Zv, yv, dH, pO, O)
+    return RBE(MF, RMF, design, fac, θvec0, vlm, Tuple(θ), remlv, fixed, typeiii, Rv, Vv, G, C, A, H, X, Z, Xv, Zv, yv, dH, pO, O)
 end #END OF rbe()
 """
 This function apply following code for each factor before executing:
@@ -286,8 +262,7 @@ function rbe!(df; dvar::Symbol,
     store_trace = false, extended_trace = false, show_trace = false,
     memopt = true,
     init = [],
-    twostep = true,
-    postopt = false)
+    postopt = false, vlm = 1.0, maxopttry = 50, rhoadjstep = 0.15)
 
     if any(x -> x ∉ names(df), [subject, formulation, period, sequence]) throw(ArgumentError("Names not found in DataFrame!")) end
     if !(eltype(df[!,dvar]) <: Real)
@@ -304,14 +279,26 @@ function rbe!(df; dvar::Symbol,
     return rbe(df, dvar=dvar, subject=subject, formulation=formulation, period=period, sequence=sequence,
     g_tol=g_tol, x_tol=x_tol, f_tol=f_tol, iterations=iterations,
     store_trace=store_trace, extended_trace=extended_trace, show_trace=show_trace,
-    memopt=memopt, init=init, twostep=twostep, postopt=postopt)
+    memopt=memopt, init=init, postopt=postopt, vlm = vlm, maxopttry = maxopttry, rhoadjstep = rhoadjstep)
+end
+
+function varlink(θ, m)
+    θl      = similar(θ)
+    θl[1:4] = exp.(θ[1:4])
+    θl[5]    = 1/(1 + exp(θ[5]*m))
+    return θl
+end
+function rvarlink(θ, m)
+    θ[1:4]  = log.(θ[1:4])
+    θ[5]    = log(1/θ[5]-1)/m
+    return θ
 end
 #-------------------------------------------------------------------------------
 #returm -2REML
 """
     reml2(rbe::RBE, θ::Array{Float64, 1})
 
-Returm -2REML for rbe model
+Returm -2logREML for rbe model with θ variance vector.
 """
 function reml2(rbe::RBE, θ::Array{Float64, 1})
     return -2*reml(rbe.yv, rbe.Zv, rank(ModelMatrix(rbe.model).m), rbe.Xv, θ, coef(rbe))
@@ -321,8 +308,8 @@ end
 
 Returm -2logREML for rbe model
 
-```
-logREML(\\theta,\\beta) = -\\frac{N-p}{2} - \\frac{1}{2}\\sum_{i=1}^nlog|V_{i}|-
+```math
+logREML(\\theta,\\beta) = -\\frac{N-p}{2} - \\frac{1}{2}\\sum_{i=1}^nlog|V_{i}|-\n
 
 -\\frac{1}{2}log|\\sum_{i=1}^nX_i'V_i^{-1}X_i|-\\frac{1}{2}\\sum_{i=1}^n(y_i - X_{i}\\beta)'V_i^{-1}(y_i - X_{i}\\beta)
 ```
@@ -349,6 +336,12 @@ Return the standard errors for the coefficients of the model.
 
 ```math
 se = \\sqrt{LCL'}
+```
+
+where
+
+```math
+C = \\sum_{i=1}^{n} X_i'V_i^{-1}X_i
 ```
 """
 function StatsBase.stderror(rbe::RBE)
@@ -377,19 +370,21 @@ function StatsBase.dof(rbe::RBE)
 end
 #Confidence interval
 """
-    confint(obj::RBE; level::Real=0.95, expci::Bool = false, inv::Bool = false, df = :sat)
+```julia
+confint(obj::RBE; level::Real=0.95, expci::Bool = false, inv::Bool = false, df = :sat)
+```
 
 Compute confidence intervals for coefficients, with confidence level ```level``` (by default 95%).
 
 # Arguments
 
-```expci = true```: return exponented CI.
+* ```expci = true```: return exponented CI.
 
-```inv = true```: return ```-estimate ± t(alpha, df)*SE```
+* ```inv = true```: return ```-estimate ± t(alpha, df)*SE```
 
-```df = :sat```: use Satterthwaite DF approximation.
+* ```df = :sat```: use Satterthwaite DF approximation.
 
-```df = :df3``` or ```df = :cont```: DF (contain) = N - rank(ZX).
+* ```df = :df3``` or ```df = :cont```: DF (contain) = N - rank(ZX).
 
 ```math
 CI = estimate ± t(alpha, df)*SE
@@ -444,7 +439,8 @@ end
 """
     theta(rbe::RBE)
 
-Return theta (θ) vector (vector of variation parameters from optimization procedure).
+Return raw theta (θ) vector (vector of variation parameters from optimization procedure).
+Before aplying link function.
 """
 function theta(rbe::RBE)
     return collect(rbe.θ)
@@ -460,23 +456,8 @@ end
 """
     design(rbe::RBE)::Design
 
-Return design information object, where:
+Return design information object.
 
-```julia
-    struct Design
-        obs::Int          # Number of observations
-        subj::Int         # Number of statistica independent subjects
-        sqn::Int          # Number of sequences
-        pn::Int           # Number of periods
-        fn::Int           # Number of formulations
-        sbf::Vector{Int}  # Subjects in each formulation level
-        rankx::Int        # Rank of fixed effect matrix
-        rankxz::Int       # Rank of XZ (fixed+random) effect matrix
-        df2::Int          # subj - sqn         (Robust DF)
-        df3::Int          # obs  - rankxz      (Contain DF for sequence and period)
-        df4::Int          # obs  - rankxz + p
-    end
-```
 """
 function design(rbe::RBE)::Design
     return rbe.design
@@ -494,7 +475,7 @@ end
 
 Return TYPE III table.
 
-see contrast
+(see contrast)
 """
 function typeiii(rbe::RBE)
     return rbe.typeiii
@@ -503,6 +484,8 @@ end
     optstat(rbe::RBE)
 
 Return optimization status.
+* true - converged
+* false - not converged
 """
 function optstat(rbe::RBE)
     return Optim.converged(rbe.optim)
@@ -510,7 +493,16 @@ end
 #-------------------------------------------------------------------------------
 function Base.show(io::IO, rbe::RBE)
     rcoef = coefnames(rbe.rmodel);
-    println(io, "Bioequivalence Linear Mixed Effect Model (status: $(Optim.converged(rbe.optim) ? "converged" : "not converged"))")
+    θ     = varlink(collect(rbe.θ), rbe.vlm)
+    println(io, "Bioequivalence Linear Mixed Effect Model (status: $(Optim.converged(rbe.optim) ? "converged" : printstyled(io, "not converged"; color = :red)))")
+    if rbe.detH <= 0.0
+        printstyled(io, "Hessian not positive!"; color = :yellow)
+        println(io, "")
+    end
+    if θ[end] >= 1.0 - eps()
+        printstyled(io, "Rho ~ 1.0!"; color = :yellow)
+        println(io, "")
+    end
     println(io, "")
     println(io, "-2REML: $(round(rbe.reml, sigdigits=6))    REML: $(round(-rbe.reml/2, sigdigits=6))")
     println(io, "")
@@ -518,22 +510,22 @@ function Base.show(io::IO, rbe::RBE)
     println(io, rbe.fixed)
     println(io, "Intra-individual variation:")
 
-    printmatrix(io,[rcoef[1] round(rbe.θ[1], sigdigits=6) "CVᵂ:" round(geocv(rbe.θ[1]), sigdigits=6);
-                    rcoef[2] round(rbe.θ[2], sigdigits=6) "CVᵂ:" round(geocv(rbe.θ[2]), sigdigits=6)])
+    printmatrix(io,[rcoef[1] round(θ[1], sigdigits=6) "CVᵂ:" round(geocv(θ[1]), sigdigits=6);
+                    rcoef[2] round(θ[2], sigdigits=6) "CVᵂ:" round(geocv(θ[2]), sigdigits=6)])
     println(io, "")
 
     println(io, "Inter-individual variation:")
 
-    printmatrix(io,[rcoef[1] round(rbe.θ[3], sigdigits=6) "";
-                    rcoef[2] round(rbe.θ[4], sigdigits=6) "";
-                    "ρ:"     round(rbe.θ[5], sigdigits=6) "Cov: $(round(sqrt(rbe.θ[4]*rbe.θ[3])*rbe.θ[5], sigdigits=6))"])
+    printmatrix(io,[rcoef[1] round(θ[3], sigdigits=6) "";
+                    rcoef[2] round(θ[4], sigdigits=6) "";
+                    "ρ:"     round(θ[5], sigdigits=6) "Cov: $(round(sqrt(θ[4]*θ[3])*θ[5], sigdigits=6))"])
     println(io, "")
 
     println(io, "Confidence intervals(90%):")
-    ci = confint(rbe, 0.1, expci = true, inv = false)
+    ci = confint(rbe, 0.1, expci = true, inv = true)
     println(io, rcoef[1], " / ", rcoef[2])
     println(io, round(ci[end][1]*100, digits=4), " - ", round(ci[end][2]*100, digits=4), " (%)")
-    ci = confint(rbe, 0.1, expci = true, inv = true)
+    ci = confint(rbe, 0.1, expci = true, inv = false)
     println(io, rcoef[2], " / ", rcoef[1])
     print(io, round(ci[end][1]*100, digits=4), " - ", round(ci[end][2]*100, digits=4), " (%)")
 end #─┼┴┬│

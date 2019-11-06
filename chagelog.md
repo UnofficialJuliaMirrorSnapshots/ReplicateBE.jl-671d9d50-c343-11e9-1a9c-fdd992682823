@@ -1,3 +1,15 @@
+- v1.0.0
+
+    * validation
+    * test procedures
+    * rho & df "problem" solved
+    * fix text output
+    * twostep deprecated
+    * varlink() - optimization with logVar & sigmoid rho
+    * rho initial value fix
+    * simulation object
+    * documuntation
+
 - v0.2.0
 
     * bugfix

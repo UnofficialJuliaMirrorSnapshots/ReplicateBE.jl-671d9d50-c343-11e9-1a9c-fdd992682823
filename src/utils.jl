@@ -2,7 +2,11 @@
 """
     contrast(rbe::RBE, L::Matrix; numdf = 1, name = "Contrast", memopt = true)::ContrastTable
 
-Return contrast table for L matrix.
+Return contrast table for L matrix. Table include:
+* F
+* NumDF
+* DF
+* P|f|
 
 ```math
 F = \\frac{\\beta'L'(LCL')^{-1}L\\beta}{rank(LCL')}
@@ -26,6 +30,11 @@ where ``g = \\triangledown _{\\theta}(LC^{-1}L')``
 
 DF for multi-dimention case see Schaalje et al 2002.
 
+p value calculated with:
+
+```julia
+pval    = ccdf(FDist(numdf, df), F)
+```
 """
 function contrast(rbe::RBE, L::Matrix; numdf = 0, name = "Contrast", memopt = true)::ContrastTable
     β       = coef(rbe)
@@ -39,13 +48,13 @@ function contrast(rbe::RBE, L::Matrix; numdf = 0, name = "Contrast", memopt = tr
     if rank(L) ≥ 2
         vm      = Array{Float64, 1}(undef, size(L, 1))
         for i = 1:length(vm)
-            g       = ForwardDiff.gradient(x -> lclgf(L[i:i,:], L[i:i,:]', rbe.Xv, rbe.Zv, x; memopt = memopt), θ)
+            g       = ForwardDiff.gradient(x -> lclgf(L[i:i,:], L[i:i,:]', rbe.Xv, rbe.Zv, varlink(x, rbe.vlm); memopt = memopt), θ)
             df      = 2*((L[i:i,:]*rbe.C*L[i:i,:]')[1])^2/(g'*(rbe.A)*g)
             vm[i]   = df/(df-2)
         end
         df = 2*sum(vm)/(sum(vm)-rank(L))
     else
-        g       = ForwardDiff.gradient(x -> lclgf(L, L', rbe.Xv, rbe.Zv, x; memopt = memopt), θ)
+        g       = ForwardDiff.gradient(x -> lclgf(L, L', rbe.Xv, rbe.Zv, varlink(x, rbe.vlm); memopt = memopt), θ)
         df      = 2*((lcl)[1])^2/(g'*(rbe.A)*g)
     end
     pval    = ccdf(FDist(numdf, df), F)
@@ -54,7 +63,14 @@ end
 """
     estimate(rbe::RBE, L::Matrix; df = :sat, name = "Estimate", memopt = true, alpha = 0.05)
 
-Return estimate table for L 1xp matrix.
+Return estimate table for L 1xp matrix. Table include:
+* estimate value
+* SE
+* DF
+* t
+* P|t|
+* CI Upper
+* CI Lower
 
 ```math
 estimate = L\\beta
@@ -95,6 +111,12 @@ CI estimate is:
 ```math
 CI = estimate ± t(alpha, df)*SE
 ```
+
+Example of L matrix if length of fixed effect vector is 6, estimate for 4-th value:
+
+```julia
+L = [0 0 0 1 0 0]
+```
 """
 function estimate(rbe::RBE, L::Matrix; df = :sat, name = "Estimate", memopt = true, alpha = 0.05)
     lcl     = L*rbe.C*L'
@@ -105,7 +127,7 @@ function estimate(rbe::RBE, L::Matrix; df = :sat, name = "Estimate", memopt = tr
     #F       = β'*L'*inv(lcl)*L*β/lclr
     if df == :sat
         θ       = theta(rbe)
-        g       = ForwardDiff.gradient(x -> lclgf(L, L', rbe.Xv, rbe.Zv, x; memopt = memopt), θ)
+        g       = ForwardDiff.gradient(x -> lclgf(L, L', rbe.Xv, rbe.Zv, varlink(x, rbe.vlm); memopt = memopt), θ)
         df      = 2*((lcl)[1])^2/(g'*(rbe.A)*g)
     elseif df == :cont
         df      = rbe.design.df3
